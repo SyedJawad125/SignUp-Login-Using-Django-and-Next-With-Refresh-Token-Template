@@ -689,6 +689,56 @@ class ResetPasswordSimpleSerializer(serializers.Serializer):
         
         return attrs
 
+# Add this serializer to your existing serializers.py file
+class ChangePasswordSerializer(serializers.Serializer):
+    """
+    Serializer for changing password when user is logged in
+    """
+    old_password = serializers.CharField(
+        required=True,
+        style={"input_type": "password"},
+        trim_whitespace=True,
+        write_only=True
+    )
+    new_password = serializers.CharField(
+        required=True,
+        style={"input_type": "password"},
+        trim_whitespace=True,
+        write_only=True
+    )
+    confirm_password = serializers.CharField(
+        required=True,
+        style={"input_type": "password"},
+        trim_whitespace=True,
+        write_only=True
+    )
+
+    def validate(self, attrs):
+        """Validate password fields"""
+        # Check if new passwords match
+        if attrs['new_password'] != attrs['confirm_password']:
+            raise serializers.ValidationError({"confirm_password": PASSWORD_DOES_NOT_MATCH})
+        
+        # Check password length
+        if len(attrs["new_password"]) < PASSWORD_MIN_LENGTH:
+            raise serializers.ValidationError({"new_password": PasswordMustBeEightChar})
+        
+        # Check password pattern
+        if not validate_password(attrs["new_password"]):
+            raise serializers.ValidationError({"new_password": FOLLOW_PASSWORD_PATTERN})
+        
+        # Check if new password is same as old password
+        if attrs['old_password'] == attrs['new_password']:
+            raise serializers.ValidationError({"new_password": "New password cannot be same as old password"})
+        
+        return attrs
+
+    def validate_old_password(self, value):
+        """Validate old password"""
+        user = self.context.get('request').user
+        if not user.check_password(value):
+            raise serializers.ValidationError("Current password is incorrect")
+        return value
 
 class PermissionSerializer(serializers.ModelSerializer):
     class Meta:
