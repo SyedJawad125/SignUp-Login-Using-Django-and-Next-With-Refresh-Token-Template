@@ -1226,6 +1226,93 @@ class VerifyOTPView(APIView):
                           status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+# class ResetPasswordView(APIView):
+#     """
+#     Step 3: Reset password using token from OTP verification
+#     Endpoint: POST /v1/reset/password/
+#     Payload: {
+#         "reset_token": "token-from-verify-otp",
+#         "new_password": "NewPassword123!",
+#         "confirm_password": "NewPassword123!"
+#     }
+#     No need to send email or code again!
+#     """
+#     authentication_classes = ()
+#     permission_classes = (AllowAny,)
+#     serializer_class = ResetPasswordSimpleSerializer
+    
+#     def post(self, request):
+#         try:
+#             serialized_data = self.serializer_class(data=request.data)
+#             if not serialized_data.is_valid():
+#                 return Response(create_response(get_first_error(serialized_data.errors)),
+#                               status=status.HTTP_400_BAD_REQUEST)
+            
+#             reset_token = serialized_data.validated_data['reset_token']
+#             new_password = serialized_data.validated_data['new_password']
+            
+#             # Find user by reset token
+#             user = User.objects.filter(password_link_token=reset_token, deleted=False).first()
+            
+#             if not user:
+#                 return Response(create_response("Invalid or expired reset token"), 
+#                               status=status.HTTP_400_BAD_REQUEST)
+            
+#             # Check if OTP was verified
+#             if not user.password_reset_verified:
+#                 return Response(create_response("Please verify OTP first"), 
+#                               status=status.HTTP_400_BAD_REQUEST)
+            
+#             # Check token expiration (same as OTP expiration)
+#             expiry_seconds = PASSWORD_RESET_VALIDITY * 60
+#             time_diff = timezone.now() - user.password_link_token_created_at
+            
+#             if time_diff.total_seconds() > expiry_seconds:
+#                 # Clear expired token
+#                 user.password_link_token = None
+#                 user.password_link_token_created_at = None
+#                 user.password_reset_code = None
+#                 user.password_reset_code_created_at = None
+#                 user.password_reset_verified = False
+#                 user.save()
+#                 return Response(create_response("Reset token has expired. Please request a new OTP."), 
+#                               status=status.HTTP_400_BAD_REQUEST)
+            
+#             # Check if new password is same as old password
+#             if user.check_password(new_password):
+#                 return Response(create_response(NEW_PASSWORD_IS_SAME_AS_OLD),
+#                               status=status.HTTP_400_BAD_REQUEST)
+            
+#             # Set new password
+#             user.set_password(new_password)
+            
+#             # Clear all reset fields
+#             user.password_reset_code = None
+#             user.password_reset_code_created_at = None
+#             user.password_reset_verified = False
+#             user.password_link_token = None
+#             user.password_link_token_created_at = None
+            
+#             # Ensure user is active and unblocked
+#             user.is_active = True
+#             user.is_blocked = False
+#             user.login_attempts = 0
+#             user.last_password_changed = timezone.now()
+            
+#             user.save()
+            
+#             return Response({
+#                 "status": "SUCCESSFUL",
+#                 "message": "Password reset successfully. You can now login with your new password.",
+#                 "redirect_login": True
+#             }, status=status.HTTP_200_OK)
+            
+#         except Exception as e:
+#             print(str(e))
+#             return Response(create_response(str(e)), 
+#                           status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 class ResetPasswordView(APIView):
     """
     Step 3: Reset password using token from OTP verification
@@ -1236,6 +1323,7 @@ class ResetPasswordView(APIView):
         "confirm_password": "NewPassword123!"
     }
     No need to send email or code again!
+    After successful reset, sends confirmation email automatically.
     """
     authentication_classes = ()
     permission_classes = (AllowAny,)
@@ -1301,6 +1389,9 @@ class ResetPasswordView(APIView):
             
             user.save()
             
+            # ⭐ Send password changed confirmation email (automatic - user email from backend)
+            self.send_password_changed_email(user, reset_type="Password Reset")
+            
             return Response({
                 "status": "SUCCESSFUL",
                 "message": "Password reset successfully. You can now login with your new password.",
@@ -1311,6 +1402,143 @@ class ResetPasswordView(APIView):
             print(str(e))
             return Response(create_response(str(e)), 
                           status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @staticmethod
+    def send_password_changed_email(user, reset_type="Password Reset"):
+        """
+        Send password changed confirmation email
+        Email is automatically sent to user's email from backend - no user input needed
+        """
+        try:
+            send_email.delay(
+                PASSWORD_CHANGED_EMAIL_TEMP,  # Email template constant
+                [user.email],  # ⭐ Email automatically taken from user object
+                {
+                    "full_name": user.full_name,
+                    "email": user.email,
+                    "timestamp": timezone.now().strftime("%B %d, %Y at %I:%M %p"),
+                    "reset_type": reset_type,
+                    "action_type": "password reset via OTP"
+                }
+            )
+        except Exception as e:
+            print(f"Password changed email sending failed: {e}")
+            # Fallback: Send simple email directly
+            from django.core.mail import send_mail
+            from django.conf import settings
+            try:
+                send_mail(
+                    'Password Changed Successfully',
+                    f'Hello {user.full_name},\n\nYour password was successfully changed via {reset_type} on {timezone.now().strftime("%B %d, %Y at %I:%M %p")}.\n\nIf you did not make this change, please contact our support team immediately.\n\nBest regards,\nThe Team',
+                    settings.DEFAULT_FROM_EMAIL,
+                    [user.email],  # ⭐ Email automatically from backend
+                    fail_silently=False,
+                )
+            except Exception as email_error:
+                print(f"Direct email also failed: {email_error}")
+
+
+class ChangePasswordView(APIView):
+    """
+    Change password for logged-in users
+    Endpoint: POST /v1/change-password/
+    Payload: {
+        "old_password": "CurrentPassword123!",
+        "new_password": "NewPassword123!",
+        "confirm_password": "NewPassword123!"
+    }
+    Authentication required - user must be logged in
+    After successful change, sends confirmation email automatically.
+    """
+    permission_classes = (IsAuthenticated,)
+    serializer_class = ChangePasswordSerializer
+    
+    def post(self, request):
+        try:
+            # ⭐ Get user from request (authenticated user - email automatically from backend)
+            user = request.user
+            
+            # Serialize and validate data
+            serialized_data = self.serializer_class(data=request.data, context={'request': request})
+            if not serialized_data.is_valid():
+                return Response(create_response(get_first_error(serialized_data.errors)),
+                              status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get validated data
+            new_password = serialized_data.validated_data['new_password']
+            
+            # Check if new password is same as old password (additional check)
+            if user.check_password(new_password):
+                return Response(create_response(NEW_PASSWORD_IS_SAME_AS_OLD),
+                              status=status.HTTP_400_BAD_REQUEST)
+            
+            # Set new password
+            user.set_password(new_password)
+            
+            # Update user fields
+            user.last_password_changed = timezone.now()
+            user.login_attempts = 0  # Reset login attempts
+            user.is_blocked = False  # Unblock if blocked
+            user.is_active = True    # Ensure active
+            
+            # Clear any reset tokens (security measure)
+            user.password_reset_code = None
+            user.password_reset_code_created_at = None
+            user.password_reset_verified = False
+            user.password_link_token = None
+            user.password_link_token_created_at = None
+            
+            user.save()
+            
+            # ⭐ Send password changed confirmation email (automatic - user email from backend)
+            self.send_password_changed_email(user, reset_type="Password Change")
+            
+            # Return success response
+            return Response({
+                "status": "SUCCESSFUL",
+                "message": "Password changed successfully. You can now login with your new password.",
+                "redirect_login": True
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(str(e))
+            return Response(create_response(str(e)), 
+                          status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @staticmethod
+    def send_password_changed_email(user, reset_type="Password Change"):
+        """
+        Send password changed confirmation email
+        Email is automatically sent to user's email from backend - no user input needed
+        """
+        try:
+            send_email.delay(
+                PASSWORD_CHANGED_EMAIL_TEMP,  # Email template constant
+                [user.email],  # ⭐ Email automatically taken from user object
+                {
+                    "full_name": user.full_name,
+                    "email": user.email,
+                    "timestamp": timezone.now().strftime("%B %d, %Y at %I:%M %p"),
+                    "reset_type": reset_type,
+                    "action_type": "manual password change"
+                }
+            )
+        except Exception as e:
+            print(f"Password changed email sending failed: {e}")
+            # Fallback: Send simple email directly
+            from django.core.mail import send_mail
+            from django.conf import settings
+            try:
+                send_mail(
+                    'Password Changed Successfully',
+                    f'Hello {user.full_name},\n\nYour password was successfully changed on {timezone.now().strftime("%B %d, %Y at %I:%M %p")}.\n\nIf you did not make this change, please contact our support team immediately.\n\nBest regards,\nThe Team',
+                    settings.DEFAULT_FROM_EMAIL,
+                    [user.email],  # ⭐ Email automatically from backend
+                    fail_silently=False,
+                )
+            except Exception as email_error:
+                print(f"Direct email also failed: {email_error}")
+
 
 
 class VerifyLinkView(APIView):
@@ -1350,7 +1578,7 @@ class VerifyLinkView(APIView):
             print(str(e))
             return Response(create_response(str(e)), status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# # Add this view to your existing views.py file
+
 # class ChangePasswordView(APIView):
 #     """
 #     Change password for logged-in users
@@ -1363,7 +1591,7 @@ class VerifyLinkView(APIView):
 #     Authentication required
 #     """
 #     permission_classes = (IsAuthenticated,)
-#     serializer_class = ChangePasswordSerializer  # You'll need to create this serializer
+#     serializer_class = ChangePasswordSerializer
     
 #     def post(self, request):
 #         try:
@@ -1377,10 +1605,13 @@ class VerifyLinkView(APIView):
 #                               status=status.HTTP_400_BAD_REQUEST)
             
 #             # Get validated data
-#             old_password = serialized_data.validated_data['old_password']
 #             new_password = serialized_data.validated_data['new_password']
             
-#             # Verify old password (already validated in serializer)
+#             # Check if new password is same as old password (additional check)
+#             if user.check_password(new_password):
+#                 return Response(create_response(NEW_PASSWORD_IS_SAME_AS_OLD),
+#                               status=status.HTTP_400_BAD_REQUEST)
+            
 #             # Set new password
 #             user.set_password(new_password)
             
@@ -1399,115 +1630,50 @@ class VerifyLinkView(APIView):
             
 #             user.save()
             
-#             # Return success response
+#             # Send password changed email (same pattern as ForgetPasswordView)
+#             self.send_password_changed_email(user)
+            
+#             # Return success response (same pattern as other views)
 #             return Response({
 #                 "status": "SUCCESSFUL",
-#                 "message": "Password changed successfully. Please login again with your new password.",
-#                 "redirect_login": True
+#                 "message": "Password changed successfully. You can now login with your new password.",
+#                 "redirect_dashboard": True
 #             }, status=status.HTTP_200_OK)
             
 #         except Exception as e:
 #             print(str(e))
 #             return Response(create_response(str(e)), 
 #                           status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-
-class ChangePasswordView(APIView):
-    """
-    Change password for logged-in users
-    Endpoint: POST /v1/change-password/
-    Payload: {
-        "old_password": "CurrentPassword123!",
-        "new_password": "NewPassword123!",
-        "confirm_password": "NewPassword123!"
-    }
-    Authentication required
-    """
-    permission_classes = (IsAuthenticated,)
-    serializer_class = ChangePasswordSerializer
     
-    def post(self, request):
-        try:
-            # Get user from request
-            user = request.user
-            
-            # Serialize and validate data
-            serialized_data = self.serializer_class(data=request.data, context={'request': request})
-            if not serialized_data.is_valid():
-                return Response(create_response(get_first_error(serialized_data.errors)),
-                              status=status.HTTP_400_BAD_REQUEST)
-            
-            # Get validated data
-            new_password = serialized_data.validated_data['new_password']
-            
-            # Check if new password is same as old password (additional check)
-            if user.check_password(new_password):
-                return Response(create_response(NEW_PASSWORD_IS_SAME_AS_OLD),
-                              status=status.HTTP_400_BAD_REQUEST)
-            
-            # Set new password
-            user.set_password(new_password)
-            
-            # Update user fields
-            user.last_password_changed = timezone.now()
-            user.login_attempts = 0  # Reset login attempts
-            user.is_blocked = False  # Unblock if blocked
-            user.is_active = True    # Ensure active
-            
-            # Clear any reset tokens (security measure)
-            user.password_reset_code = None
-            user.password_reset_code_created_at = None
-            user.password_reset_verified = False
-            user.password_link_token = None
-            user.password_link_token_created_at = None
-            
-            user.save()
-            
-            # Send password changed email (same pattern as ForgetPasswordView)
-            self.send_password_changed_email(user)
-            
-            # Return success response (same pattern as other views)
-            return Response({
-                "status": "SUCCESSFUL",
-                "message": "Password changed successfully. You can now login with your new password.",
-                "redirect_dashboard": True
-            }, status=status.HTTP_200_OK)
-            
-        except Exception as e:
-            print(str(e))
-            return Response(create_response(str(e)), 
-                          status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
-    @staticmethod
-    def send_password_changed_email(user):
-        """Send password changed email notification - same pattern as generate_and_send_otp"""
-        try:
-            # Send email with password changed notification
-            send_email.delay(
-                PASSWORD_CHANGED_EMAIL_TEMP,  # Use your email template constant
-                [user.email], 
-                {
-                    "full_name": user.full_name, 
-                    "timestamp": timezone.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "email": user.email,
-                }
-            )
-        except Exception as e:
-            print(f"Email sending failed: {e}")
-            # Optionally: Send email directly as fallback (same as in ForgetPasswordView)
-            from django.core.mail import send_mail
-            from django.conf import settings
-            try:
-                send_mail(
-                    'Password Changed Successfully',
-                    f'Hello {user.full_name},\n\nYour password was successfully changed on {timezone.now().strftime("%Y-%m-%d %H:%M:%S")}.\n\nIf you did not make this change, please contact our support team immediately.\n\nBest regards,\nThe Team',
-                    settings.DEFAULT_FROM_EMAIL,
-                    [user.email],
-                    fail_silently=False,
-                )
-            except Exception as email_error:
-                print(f"Direct email also failed: {email_error}")
+#     @staticmethod
+#     def send_password_changed_email(user):
+#         """Send password changed email notification - same pattern as generate_and_send_otp"""
+#         try:
+#             # Send email with password changed notification
+#             send_email.delay(
+#                 PASSWORD_CHANGED_EMAIL_TEMP,  # Use your email template constant
+#                 [user.email], 
+#                 {
+#                     "full_name": user.full_name, 
+#                     "timestamp": timezone.now().strftime("%Y-%m-%d %H:%M:%S"),
+#                     "email": user.email,
+#                 }
+#             )
+#         except Exception as e:
+#             print(f"Email sending failed: {e}")
+#             # Optionally: Send email directly as fallback (same as in ForgetPasswordView)
+#             from django.core.mail import send_mail
+#             from django.conf import settings
+#             try:
+#                 send_mail(
+#                     'Password Changed Successfully',
+#                     f'Hello {user.full_name},\n\nYour password was successfully changed on {timezone.now().strftime("%Y-%m-%d %H:%M:%S")}.\n\nIf you did not make this change, please contact our support team immediately.\n\nBest regards,\nThe Team',
+#                     settings.DEFAULT_FROM_EMAIL,
+#                     [user.email],
+#                     fail_silently=False,
+#                 )
+#             except Exception as email_error:
+#                 print(f"Direct email also failed: {email_error}")
 
 class EmployeeView(BaseView):
     permission_classes = (IsAuthenticated,)

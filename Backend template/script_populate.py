@@ -85,6 +85,8 @@ def email_templates():
         "user_delete": "Delete Employee",
         "user_deactivated": "Deactivate Employee",
         "user_reactivated": "Reactivate Employee",
+        "password_changed_success_email": "Password Changed Success Email",
+        "forget_password_clicklinkcode": "Forget Password Click Link Code",
     }
 
     print("Updating Email Templates...")

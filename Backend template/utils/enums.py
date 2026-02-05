@@ -252,4 +252,4 @@ IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 ### Timezone ###
 UTC = "UTC"
 
-PASSWORD_CHANGED_EMAIL_TEMP = "password_changed_email" 
+PASSWORD_CHANGED_EMAIL_TEMP = "password_changed_success_email" 
