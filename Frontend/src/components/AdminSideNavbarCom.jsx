@@ -798,7 +798,7 @@
 'use client';
 import { useState, useEffect, useContext } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { Home, Users, FileText, Settings, LogOut, Lock, Eye, Menu, X, ChevronRight, User, Shield, Zap, Globe, Image } from 'lucide-react';
+import { Home, Users, FileText, Settings, LogOut, Lock, Eye, Menu, X, Key, ChevronRight, User, Shield, Zap, Globe, Image } from 'lucide-react';
 import { AuthContext } from '@/components/AuthContext'; // Adjust path as needed
 
 const AdminSideNavbarCom = () => {
@@ -854,6 +854,22 @@ const AdminSideNavbarCom = () => {
       icon: Users,
       path: '/employeepage',
       roles: ['admin'],
+      color: 'emerald'
+    },
+    {
+      id: 'roles',
+      label: 'Roles',
+      icon: Shield,
+      path: '/RolesPage',
+      roles: ['admin', 'super'],
+      color: 'red'
+    },
+    {
+      id: 'permissions',
+      label: 'Permissions',
+      icon: Key,
+      path: '/PermissionsPage',
+      roles: ['admin', 'super'],
       color: 'emerald'
     },
     {
