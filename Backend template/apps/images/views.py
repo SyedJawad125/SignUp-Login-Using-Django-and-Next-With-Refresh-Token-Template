@@ -5,8 +5,8 @@ from utils.reusable_functions import (create_response, get_first_error, get_toke
 from rest_framework import status
 from utils.response_messages import *
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from .serializers import (CategoriesSerializer, ImagesSerializer, PublicImagesSerializer, TextBoxCategoriesSerializer, TextBoxImagesSerializer)
-from .filters import (CategoriesFilter, ImagesFilter, PublicImagesFilter, TextBoxImagesFilter, TextCategoriesFilter)
+from .serializers import (CategoriesSerializer, ImagesSerializer, PublicImagesSerializer, TextBoxCategoriesSerializer, TextBoxImagesSerializer, CategoryDropdownSerializer)
+from .filters import (CategoriesFilter, ImagesFilter, PublicImagesFilter, TextBoxImagesFilter, TextCategoriesFilter, CategoryDropdownFilter)
 from rest_framework_simplejwt.tokens import RefreshToken, AccessToken
 from config.settings import (SIMPLE_JWT, FRONTEND_BASE_URL, PASSWORD_RESET_VALIDITY)
 from django.utils import timezone
@@ -41,12 +41,29 @@ class ImagesView(BaseView):
         return super().delete_(request)
 
 
+# class PublicImagesView(BaseView):
+#     serializer_class = PublicImagesSerializer
+#     filterset_class = PublicImagesFilter
+#     permission_classes = [AllowAny]  # Allow public access without authentication
+#     authentication_classes = []  # Disable authentication for public endpoint
+    
+#     def get(self, request):
+#         return super().get_(request)
+
+
 class PublicImagesView(BaseView):
     serializer_class = PublicImagesSerializer
     filterset_class = PublicImagesFilter
-
-    permission_classes = [AllowAny]  # Add this line
-    authentication_classes = []  # Also disable authentication classes
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    
+    def get_queryset(self):
+        # Only return active, non-deleted images
+        return Images.objects.filter(
+            deleted=False,
+            is_active=True,
+            is_public=True  # If you have this field
+        )
     
     def get(self, request):
         return super().get_(request)
@@ -88,5 +105,24 @@ class TextCategoriesView(BaseView):
     serializer_class = TextBoxCategoriesSerializer
     filterset_class = TextCategoriesFilter
 
+    def get(self, request):
+        return super().get_(request)
+
+
+class CategoryDropdownView(BaseView):
+    """Returns id/category list for populating frontend dropdowns.
+    Read-only, authenticated (switch to AllowAny if you need it public).
+    """
+    permission_classes = (IsAuthenticated,)
+    serializer_class = CategoryDropdownSerializer
+    filterset_class = CategoryDropdownFilter
+
+    def get_queryset(self):
+        return Categories.objects.filter(
+            deleted=False,
+            is_active=True,
+        ).order_by('category')
+
+    @permission_required([READ_IMAGE_CATEGORY])
     def get(self, request):
         return super().get_(request)

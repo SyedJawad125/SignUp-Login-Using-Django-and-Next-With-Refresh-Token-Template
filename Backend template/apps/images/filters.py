@@ -33,16 +33,31 @@ class ImagesFilter(BaseImagesFilter):
         pass
 
 
+# class PublicImagesFilter(BaseImagesFilter):
+#     """
+#     For Public Images API - might have additional public-specific filters
+#     """
+#     # Example: Only show images that are marked as public
+#     # is_public = BooleanFilter(field_name='is_public')  # if you have such field
+    
+#     class Meta(BaseImagesFilter.Meta):
+#         # You can further restrict fields for public API if needed
+#         pass
+
+
 class PublicImagesFilter(BaseImagesFilter):
     """
-    For Public Images API - might have additional public-specific filters
+    For Public Images API - only show non-deleted, active images
     """
-    # Example: Only show images that are marked as public
-    # is_public = BooleanFilter(field_name='is_public')  # if you have such field
+    is_public = BooleanFilter(field_name='is_public')  # If you have this field
     
-    class Meta(BaseImagesFilter.Meta):
-        # You can further restrict fields for public API if needed
-        pass
+    def get_queryset(self):
+        # Override to only show active images
+        queryset = super().get_queryset()
+        return queryset.filter(
+            deleted=False,
+            is_active=True
+        )
 
 
 class TextBoxImagesFilter(BaseImagesFilter):
@@ -80,3 +95,14 @@ class TextCategoriesFilter(BaseCategoriesFilter):
     
     class Meta(BaseCategoriesFilter.Meta):
         pass
+
+
+import django_filters
+
+
+class CategoryDropdownFilter(django_filters.FilterSet):
+    search = django_filters.CharFilter(field_name='category', lookup_expr='icontains')
+
+    class Meta:
+        model = Categories
+        fields = ['search']
